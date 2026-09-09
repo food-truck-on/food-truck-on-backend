@@ -71,9 +71,12 @@
 | name | VARCHAR(100) | NOT NULL | 메뉴 이름 |
 | price | INT | NOT NULL | 가격 (원) |
 | is_sold_out | BOOLEAN | NOT NULL, DEFAULT false | 품절 여부 |
+| sold_out_date | DATE | NULL | 품절 처리된 날짜 (당일 KST 기준). 오늘 날짜가 아니면 품절 아님으로 간주 |
 | is_active | BOOLEAN | NOT NULL, DEFAULT true | 활성화 여부 |
 | created_at | DATETIME | NOT NULL | 생성일시 |
 | updated_at | DATETIME | NOT NULL | 수정일시 |
+
+> **품절 자동 해제 규칙**: 품절 토글 시 `is_sold_out = true`와 함께 `sold_out_date`에 오늘(KST) 날짜를 저장한다. 메뉴를 조회/토글할 때 `sold_out_date != 오늘`이면 서버는 `is_sold_out = false`, `sold_out_date = NULL`로 lazy reset 후 응답한다. 자정 직후 접속이 없는 메뉴까지 일괄 정리하려면 매일 00:00(KST) 배치로 `sold_out_date < 오늘`인 행을 초기화하는 것을 권장(선택 사항).
 
 ---
 

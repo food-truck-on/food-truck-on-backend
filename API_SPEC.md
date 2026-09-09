@@ -11,6 +11,7 @@
 2. [푸드트럭 (FoodTruck)](#2-푸드트럭-foodtruck)
 3. [위치 (Location)](#3-위치-location)
 4. [메뉴 (Menu)](#4-메뉴-menu)
+   - [4-6. 메뉴 품절 토글](#4-6-메뉴-품절-토글)
 5. [영업 세션 (Session)](#5-영업-세션-session)
 6. [손님 화면 (Customer)](#6-손님-화면-customer)
 7. [알림 (Notification)](#7-알림-notification)
@@ -232,6 +233,7 @@ GET /api/v1/food-trucks/:foodTruckId/menus
     "name": "타코야끼 8알",
     "price": 5000,
     "is_sold_out": false,
+    "sold_out_date": null,
     "is_active": true
   },
   {
@@ -239,10 +241,12 @@ GET /api/v1/food-trucks/:foodTruckId/menus
     "name": "타코야끼 12알",
     "price": 7000,
     "is_sold_out": false,
+    "sold_out_date": null,
     "is_active": true
   }
 ]
 ```
+> `sold_out_date`가 오늘(KST) 날짜가 아니면 서버가 자동으로 `is_sold_out: false`로 내려줍니다. (당일에만 품절 유지, 다음날 자동 해제)
 
 ---
 
@@ -267,6 +271,7 @@ POST /api/v1/food-trucks/:foodTruckId/menus
   "name": "새 메뉴",
   "price": 5000,
   "is_sold_out": false,
+  "sold_out_date": null,
   "is_active": true
 }
 ```
@@ -278,13 +283,13 @@ POST /api/v1/food-trucks/:foodTruckId/menus
 PATCH /api/v1/food-trucks/:foodTruckId/menus/:menuId
 ```
 > 인증 필요 (사장님)
+> 이름/가격/활성화 여부 수정용. 품절 여부 변경은 4-6 메뉴 품절 토글 API를 사용하세요.
 
 **Request Body**
 ```json
 {
   "name": "타코야끼 8알",
-  "price": 5500,
-  "is_sold_out": true
+  "price": 5500
 }
 ```
 
@@ -294,7 +299,8 @@ PATCH /api/v1/food-trucks/:foodTruckId/menus/:menuId
   "id": 1,
   "name": "타코야끼 8알",
   "price": 5500,
-  "is_sold_out": true,
+  "is_sold_out": false,
+  "sold_out_date": null,
   "is_active": true
 }
 ```
@@ -331,9 +337,43 @@ POST /api/v1/sessions/:sessionId/menus/import-yesterday
 
 ---
 
+### 4-6. 메뉴 품절 토글
+```
+PATCH /api/v1/food-trucks/:foodTruckId/menus/:menuId/sold-out
+```
+> 인증 필요 (사장님)
+> 현재 품절 상태를 반전(toggle)시킵니다. Request Body가 없습니다.
+>
+> **동작 방식**
+> - 품절 아님 → 품절: `is_sold_out = true`, `sold_out_date = 오늘(KST)`로 저장
+> - 품절 → 품절 아님: `is_sold_out = false`, `sold_out_date = null`로 저장
+> - 품절은 **당일까지만 유지**되며, 날짜가 바뀌면(자정 KST 기준) 자동으로 해제됩니다. 즉 `sold_out_date`가 오늘이 아닌 상태로 조회/토글되면 서버가 먼저 `is_sold_out = false`로 리셋한 뒤 처리합니다.
+
+**Response 200**
+```json
+{
+  "id": 1,
+  "name": "타코야끼 8알",
+  "is_sold_out": true,
+  "sold_out_date": "2026-09-09"
+}
+```
+
+**Response 200 (해제된 경우)**
+```json
+{
+  "id": 1,
+  "name": "타코야끼 8알",
+  "is_sold_out": false,
+  "sold_out_date": null
+}
+```
+
+---
+
 ## 5. 영업 세션 (Session)
 
-### 5-1. 오늘 세션 조회 또는 생성
+### 5-1. 오늘 세션 조회 혹은 세션
 ```
 GET /api/v1/food-trucks/:foodTruckId/sessions/today
 ```
@@ -343,7 +383,7 @@ GET /api/v1/food-trucks/:foodTruckId/sessions/today
 ```json
 {
   "id": 1,
-  "date": "2026-09-05",
+  "date": "2026-09-08",
   "status": "preparing",
   "location_label": "행복아파트 정문 앞",
   "menu_count": 3,

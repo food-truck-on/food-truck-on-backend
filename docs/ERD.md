@@ -7,15 +7,21 @@
 ## 엔티티 목록
 
 ### 1. User (사용자)
+> 역할(role) 구분 없음. 푸드트럭을 등록하면 해당 유저가 소유자(사장님)가 된다.
+> 리프레시 토큰은 User 레코드에서 직접 관리한다 (유저당 1개, 재발급 시 rotation).
+
 | 컬럼명 | 타입 | 제약 | 설명 |
 |--------|------|------|------|
 | id | INT | PK, AUTO_INCREMENT | 사용자 ID |
-| role | ENUM('owner', 'customer') | NOT NULL | 역할 (사장님 / 손님) |
 | provider | ENUM('kakao', 'google') | NOT NULL | 소셜 로그인 제공자 |
 | provider_id | VARCHAR(255) | NOT NULL, UNIQUE | 소셜 로그인 고유 ID |
 | nickname | VARCHAR(100) | NOT NULL | 닉네임 |
+| refresh_token_hash | VARCHAR(255) | NULL | 리프레시 토큰 해시값 (로그아웃·탈퇴 시 NULL) |
+| access_token | VARCHAR(255) | NULL | 엑세스 토큰
+| refresh_token_expires_at | DATETIME | NULL | 리프레시 토큰 만료일시 |
 | created_at | DATETIME | NOT NULL | 생성일시 |
 | updated_at | DATETIME | NOT NULL | 수정일시 |
+| deleted_at | DATETIME | NULL | 탈퇴일시 (soft delete, NULL 이면 활성 사용자) |
 
 ---
 

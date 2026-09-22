@@ -19,6 +19,9 @@
 
 ## 1. 인증 (Auth)
 
+> 별도의 역할 선택 단계는 없다. 로그인한 사용자가 푸드트럭을 등록하면 자동으로 사장님(소유자)이 되고,
+> 손님 화면 API는 인증이 필요 없다.
+
 ### 1-1. 소셜 로그인
 ```
 POST /api/v1/auth/social
@@ -36,9 +39,9 @@ POST /api/v1/auth/social
 ```json
 {
   "access_token": "string",
+  "refresh_token": "string",
   "user": {
     "id": 1,
-    "role": "owner | customer",
     "nickname": "string"
   },
   "is_new_user": true
@@ -47,27 +50,55 @@ POST /api/v1/auth/social
 
 ---
 
-### 1-2. 역할 선택 (신규 사용자)
+### 1-2. 토큰 재발급
 ```
-PATCH /api/v1/auth/role
+POST /api/v1/auth/refresh
 ```
-> 인증 필요
+> 인증 불필요 (refresh_token 으로 검증)
 
 **Request Body**
 ```json
 {
-  "role": "owner | customer"
+  "refresh_token": "string"
 }
 ```
 
 **Response 200**
 ```json
 {
-  "id": 1,
-  "role": "owner",
-  "nickname": "string"
+  "access_token": "string",
+  "refresh_token": "string"
 }
 ```
+> 기존 refresh_token 은 무효화되고 새 토큰이 발급된다 (rotation).
+> refresh_token 은 User 레코드에 유저당 1개만 저장되므로, 다른 기기에서 로그인/재발급하면 이전 토큰은 만료된다.
+
+**에러**
+| HTTP Status | 설명 |
+|------------|------|
+| 401 | refresh_token 이 유효하지 않거나 만료됨 |
+
+---
+
+### 1-3. 로그아웃
+```
+POST /api/v1/auth/logout
+```
+> 인증 필요
+
+**Response 204** (No Content)
+> User 의 refresh_token_hash 를 NULL 로 만들어 무효화한다.
+
+---
+
+### 1-4. 회원 탈퇴
+```
+DELETE /api/v1/users/me
+```
+> 인증 필요
+
+**Response 204** (No Content)
+> 사용자를 탈퇴 처리하고(soft delete, deleted_at 기록 + refresh_token 무효화), 보유한 푸드트럭·세션·메뉴를 함께 삭제한다.
 
 ---
 

@@ -4,6 +4,12 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
 
 /** main.ts 와 e2e 테스트가 같은 전역 설정을 쓰도록 분리한다. */
 export function setupApp(app: INestApplication): void {
+  // 허용 출처: CORS_ORIGIN(쉼표 구분)이 없으면 로컬 프론트엔드만 허용한다.
+  app.enableCors({
+    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? [
+      'http://localhost:3000',
+    ],
+  });
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new HttpExceptionFilter());

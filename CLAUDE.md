@@ -1,7 +1,8 @@
 ### 규칙
 
-1. Node.js 기준으로 작성한다.
+1. Nest.js 기준으로 작성한다.
 2. MVP 패턴을 준수한다.
+3. 가상 데이터는 docs/SEED_DATA.md 의 규칙에 따라 `npm run seed` 로 넣는다.
 
 ### 사용
 

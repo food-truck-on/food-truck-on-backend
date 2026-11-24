@@ -9,6 +9,7 @@
 ### 1. User (사용자)
 > 역할(role) 구분 없음. 푸드트럭을 등록하면 해당 유저가 소유자(사장님)가 된다.
 > 리프레시 토큰은 User 레코드에서 직접 관리한다 (유저당 1개, 재발급 시 rotation).
+> 소셜 로그인은 서버가 OAuth 를 처리하고 프론트엔드에 1회용 code 를 `?code=` 로 넘긴다 → [8. AuthCode](#8-authcode-로그인-1회용-코드).
 
 | 컬럼명 | 타입 | 제약 | 설명 |
 |--------|------|------|------|
@@ -17,7 +18,7 @@
 | provider_id | VARCHAR(255) | NOT NULL, UNIQUE | 소셜 로그인 고유 ID |
 | nickname | VARCHAR(100) | NOT NULL | 닉네임 |
 | refresh_token_hash | VARCHAR(255) | NULL | 리프레시 토큰 해시값 (로그아웃·탈퇴 시 NULL) |
-| access_token | VARCHAR(255) | NULL | 엑세스 토큰
+| access_token | VARCHAR(255) | NULL | 엑세스 토큰 (로그아웃·탈퇴 시 NULL) |
 | refresh_token_expires_at | DATETIME | NULL | 리프레시 토큰 만료일시 |
 | created_at | DATETIME | NOT NULL | 생성일시 |
 | updated_at | DATETIME | NOT NULL | 수정일시 |
@@ -110,10 +111,25 @@
 
 ---
 
+### 8. AuthCode (로그인 1회용 코드)
+> 소셜 로그인 콜백 후 프론트엔드로 `?code=` 에 담아 보내는 1회용 코드. 토큰을 URL 에 노출하지 않기 위해 사용한다.
+> 프론트엔드가 `POST /auth/token` 으로 교환하면 즉시 삭제된다 (1회용). 유저당 유효한 코드는 1개이며, 새 코드 발급 시 기존 코드와 만료된 코드는 삭제한다.
+
+| 컬럼명 | 타입 | 제약 | 설명 |
+|--------|------|------|------|
+| id | INT | PK, AUTO_INCREMENT | ID |
+| user_id | INT | FK(User.id) ON DELETE CASCADE, NOT NULL | 로그인한 사용자 ID |
+| code_hash | VARCHAR(64) | NOT NULL, UNIQUE | 코드의 SHA-256 해시값 (원문은 저장하지 않음) |
+| is_new_user | BOOLEAN | NOT NULL, DEFAULT false | 이번 로그인으로 신규 가입(또는 탈퇴 후 재가입)되었는지 여부 |
+| expires_at | DATETIME | NOT NULL | 만료일시 (발급 후 3분) |
+| created_at | DATETIME | NOT NULL | 생성일시 |
+
+---
+
 ## 관계 다이어그램 (ERD)
 
 ```
-User (1) ──────────────── (N) FoodTruck
+AuthCode (N) ─── (1) User (1) ──────────────── (N) FoodTruck
                                   │
                     ┌─────────────┼─────────────┐
                     │             │             │
@@ -124,6 +140,7 @@ User (1) ──────────────── (N) FoodTruck
 
 ### 관계 요약
 - **User → FoodTruck**: 1:N (한 사장님이 여러 푸드트럭 보유 가능)
+- **User → AuthCode**: 1:N (로그인 1회용 코드, 실제로는 유저당 유효한 코드 1개)
 - **FoodTruck → FavoriteLocation**: 1:N (푸드트럭마다 여러 자주 가는 장소)
 - **FoodTruck → DailySession**: 1:N (날짜별 영업 세션)
 - **FoodTruck → MenuItem**: 1:N (푸드트럭의 메뉴 목록)

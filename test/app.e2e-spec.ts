@@ -35,11 +35,26 @@ describe('Food truck API (e2e)', () => {
 
   const api = () => request(app.getHttpServer());
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
-  // 소셜 토큰 검증을 대체: provider_token 을 그대로 provider_id 로 쓴다.
-  const login = async (providerToken: string) => {
+  const locationOf = (response: { headers: Record<string, string> }) =>
+    new URL(response.headers.location);
+  const FRONTEND_CALLBACK = 'http://localhost:3000/auth/callback';
+
+  // 소셜 로그인 흐름: 시작(302) → 제공자 콜백(302, 프론트로 ?code=) → code 교환.
+  // 제공자 연동은 대체: 제공자 인가 코드를 그대로 provider_id 로 쓴다.
+  const loginCode = async (providerCode: string) => {
+    const start = await api().get('/api/v1/auth/kakao').expect(302);
+    const state = locationOf(start).searchParams.get('state') as string;
+    const callback = await api()
+      .get('/api/v1/auth/kakao/callback')
+      .query({ code: providerCode, state })
+      .expect(302);
+    return locationOf(callback);
+  };
+  const login = async (providerCode: string) => {
+    const redirect = await loginCode(providerCode);
     const response = await api()
-      .post('/api/v1/auth/social')
-      .send({ provider: 'kakao', provider_token: providerToken })
+      .post('/api/v1/auth/token')
+      .send({ code: redirect.searchParams.get('code') })
       .expect(200);
     return response.body;
   };
@@ -47,6 +62,7 @@ describe('Food truck API (e2e)', () => {
   beforeAll(async () => {
     process.env.JWT_ACCESS_SECRET = 'test-access-secret';
     process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
+    process.env.FRONTEND_LOGIN_REDIRECT_URL = FRONTEND_CALLBACK;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -55,9 +71,11 @@ describe('Food truck API (e2e)', () => {
       .useModule(TestDatabaseModule)
       .overrideProvider(SocialProfileService)
       .useValue({
-        getProfile: async (_provider: string, token: string) => ({
-          providerId: token,
-          nickname: `닉네임-${token}`,
+        getAuthorizeUrl: (_provider: string, state: string) =>
+          `https://provider.example/authorize?state=${state}`,
+        getProfileByCode: async (_provider: string, code: string) => ({
+          providerId: code,
+          nickname: `닉네임-${code}`,
         }),
       })
       .compile();
@@ -81,9 +99,9 @@ describe('Food truck API (e2e)', () => {
     expect(response.body.paths).toHaveProperty(
       '/api/v1/sessions/{sessionId}/open',
     );
-    expect(
-      response.body.paths['/api/v1/food-trucks/me'].get.security,
-    ).toEqual([{ bearer: [] }]);
+    expect(response.body.paths['/api/v1/food-trucks/me'].get.security).toEqual([
+      { bearer: [] },
+    ]);
     await api().get('/api/docs').expect(200);
   });
 
@@ -95,9 +113,10 @@ describe('Food truck API (e2e)', () => {
   });
 
   it('잘못된 요청은 400 을 반환한다', async () => {
+    await api().get('/api/v1/auth/naver').expect(400);
     const response = await api()
-      .post('/api/v1/auth/social')
-      .send({ provider: 'naver', provider_token: 'x' })
+      .post('/api/v1/auth/token')
+      .send({})
       .expect(400);
     expect(response.body.error.code).toBe('BAD_REQUEST');
   });
@@ -117,6 +136,51 @@ describe('Food truck API (e2e)', () => {
         .set(bearer(first.access_token))
         .send({ name: '만료 토큰 트럭' })
         .expect(401);
+    });
+
+    it('콜백은 프론트엔드로 ?code= 를 넘기고, code 는 1회만 교환할 수 있다', async () => {
+      const redirect = await loginCode('code-user');
+      expect(`${redirect.origin}${redirect.pathname}`).toBe(FRONTEND_CALLBACK);
+      expect(redirect.searchParams.has('access_token')).toBe(false);
+      const code = redirect.searchParams.get('code');
+      expect(code).toBeTruthy();
+
+      await api().post('/api/v1/auth/token').send({ code }).expect(200);
+      const reused = await api()
+        .post('/api/v1/auth/token')
+        .send({ code })
+        .expect(401);
+      expect(reused.body.error.code).toBe('UNAUTHORIZED');
+    });
+
+    it('state 가 없거나 위조되었거나, 제공자 로그인이 거부되면 ?error= 로 넘긴다', async () => {
+      const forged = await api()
+        .get('/api/v1/auth/kakao/callback')
+        .query({ code: 'x', state: 'forged' })
+        .expect(302);
+      expect(locationOf(forged).searchParams.get('error')).toBe(
+        'invalid_state',
+      );
+      expect(locationOf(forged).searchParams.has('code')).toBe(false);
+
+      // kakao 로 발급된 state 를 google 콜백에 쓸 수 없다
+      const start = await api().get('/api/v1/auth/kakao').expect(302);
+      const state = locationOf(start).searchParams.get('state');
+      const mismatched = await api()
+        .get('/api/v1/auth/google/callback')
+        .query({ code: 'x', state })
+        .expect(302);
+      expect(locationOf(mismatched).searchParams.get('error')).toBe(
+        'invalid_state',
+      );
+
+      const denied = await api()
+        .get('/api/v1/auth/kakao/callback')
+        .query({ error: 'access_denied', state })
+        .expect(302);
+      expect(locationOf(denied).searchParams.get('error')).toBe(
+        'access_denied',
+      );
     });
 
     it('토큰 재발급은 rotation 되고, 로그아웃하면 모두 무효화된다', async () => {
@@ -162,10 +226,7 @@ describe('Food truck API (e2e)', () => {
     });
 
     it('푸드트럭 등록 / 중복 등록 409 / 내 푸드트럭 조회', async () => {
-      await api()
-        .get('/api/v1/food-trucks/me')
-        .set(bearer(token))
-        .expect(404);
+      await api().get('/api/v1/food-trucks/me').set(bearer(token)).expect(404);
 
       const created = await api()
         .post('/api/v1/food-trucks')
@@ -504,10 +565,7 @@ describe('Food truck API (e2e)', () => {
     it('회원 탈퇴 시 푸드트럭과 하위 데이터가 함께 삭제된다', async () => {
       await api().delete('/api/v1/users/me').set(bearer(token)).expect(204);
 
-      await api()
-        .get('/api/v1/food-trucks/me')
-        .set(bearer(token))
-        .expect(401);
+      await api().get('/api/v1/food-trucks/me').set(bearer(token)).expect(401);
       await api()
         .get(`/api/v1/customer/food-trucks/${encodeURIComponent(shareSlug)}`)
         .expect(404);
@@ -574,7 +632,12 @@ describe('Food truck API (e2e)', () => {
     expect(imported.body).toEqual({
       imported_count: 1,
       menus: [
-        { id: yesterdayMenu.id, name: '떡볶이', price: 4000, is_sold_out: false },
+        {
+          id: yesterdayMenu.id,
+          name: '떡볶이',
+          price: 4000,
+          is_sold_out: false,
+        },
       ],
     });
 

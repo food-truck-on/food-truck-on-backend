@@ -5,12 +5,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { AuthCode } from './entities/auth-code.entity.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { SocialProfileService } from './social-profile.service.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, AuthCode]),
     JwtModule.register({}),
     HttpModule.register({ timeout: 5000 }),
   ],

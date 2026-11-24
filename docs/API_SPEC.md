@@ -23,16 +23,97 @@
 > 별도의 역할 선택 단계는 없다. 로그인한 사용자가 푸드트럭을 등록하면 자동으로 사장님(소유자)이 되고,
 > 손님 화면 API는 인증이 필요 없다.
 
-### 1-1. 소셜 로그인
+### 1-1. 소셜 로그인 (Authorization Code + `?code=` 전달)
+
+> 서버가 소셜 제공자(kakao / google)와의 OAuth 과정을 처리하고, 프론트엔드에는 **1회용 `code`** 만 쿼리스트링으로 넘긴다.
+> 토큰(access_token / refresh_token)은 URL 에 노출하지 않고, 프론트엔드가 `code` 를 [1-1-3](#1-1-3-로그인-code-교환) 으로 교환해 받는다.
+> 가입되지 않은 사용자는 자동 가입된다.
+
+**흐름**
 ```
-POST /api/v1/auth/social
+프론트엔드                     백엔드                              소셜 제공자
+    │ ① 브라우저 이동                │                                    │
+    │  GET /auth/{provider}  ──────▶│                                    │
+    │                              │ ② 302 로그인 페이지 (state 포함) ──▶│
+    │                              │                                    │ 사용자 로그인·동의
+    │                              │◀── ③ GET /auth/{provider}/callback?code=…&state=…
+    │                              │  제공자 code → 토큰 교환, 프로필 조회, 가입/로그인
+    │◀── ④ 302 {FRONTEND_LOGIN_REDIRECT_URL}?code=<1회용 code>      │
+    │ ⑤ POST /auth/token { code } ─▶│                                    │
+    │◀──── access_token, refresh_token, user, is_new_user           │
 ```
+
+#### 1-1-1. 소셜 로그인 시작
+```
+GET /api/v1/auth/{provider}
+```
+> 인증 불필요. 프론트엔드는 `fetch` 가 아니라 **브라우저 이동**(`location.href`, `<a href>`)으로 호출한다.
+
+**Path Parameter**
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| provider | string | `kakao` \| `google` |
+
+**Response 302** — 소셜 제공자 로그인 페이지로 리다이렉트
+```
+Location: https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=…&redirect_uri=…&state=…
+```
+> `state` 는 CSRF 방지용 서명 값(유효 10분)으로, 콜백에서 검증한다.
+
+**에러**
+| HTTP Status | 설명 |
+|------------|------|
+| 400 | 지원하지 않는 provider |
+
+---
+
+#### 1-1-2. 소셜 로그인 콜백
+```
+GET /api/v1/auth/{provider}/callback?code={providerCode}&state={state}
+```
+> 소셜 제공자가 호출하는 Redirect URI. 제공자 콘솔에 `{API_BASE_URL}/api/v1/auth/{provider}/callback` 으로 등록한다.
+> 프론트엔드가 직접 호출하지 않는다.
+
+**Query Parameter** (제공자가 붙여 줌)
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| code | string | 소셜 제공자가 발급한 인가 코드 |
+| state | string | 1-1-1 에서 서버가 발급한 state |
+| error | string | 사용자가 동의를 거부하는 등 실패 시 |
+
+**Response 302** — 프론트엔드(`FRONTEND_LOGIN_REDIRECT_URL`)로 리다이렉트
+
+성공
+```
+Location: http://localhost:3000/auth/callback?code=Xk3v…
+```
+
+실패
+```
+Location: http://localhost:3000/auth/callback?error=login_failed
+```
+
+| error 값 | 설명 |
+|---------|------|
+| access_denied | 사용자가 소셜 로그인 동의를 거부함 |
+| invalid_request | 제공자 code 가 없음 |
+| invalid_state | state 가 없거나 위조·만료되었거나 provider 가 다름 |
+| login_failed | 제공자 토큰 교환 또는 프로필 조회 실패 |
+
+> 전달되는 `code` 는 **1회용**이며 **3분** 후 만료된다. 서버에는 해시값만 저장한다 ([ERD AuthCode](./ERD.md)).
+
+---
+
+#### 1-1-3. 로그인 code 교환
+```
+POST /api/v1/auth/token
+```
+> 인증 불필요. 프론트엔드 콜백 페이지에서 쿼리스트링의 `code` 를 꺼내 바로 호출한다.
 
 **Request Body**
 ```json
 {
-  "provider": "kakao | google",
-  "provider_token": "string"
+  "code": "string"
 }
 ```
 
@@ -48,6 +129,12 @@ POST /api/v1/auth/social
   "is_new_user": true
 }
 ```
+
+**에러**
+| HTTP Status | 설명 |
+|------------|------|
+| 400 | code 누락 |
+| 401 | code 가 유효하지 않거나 만료되었거나 이미 사용됨 |
 
 ---
 
@@ -88,7 +175,7 @@ POST /api/v1/auth/logout
 > 인증 필요
 
 **Response 204** (No Content)
-> User 의 refresh_token_hash 를 NULL 로 만들어 무효화한다.
+> User 의 access_token, refresh_token_hash 를 NULL 로 만들어 무효화한다.
 
 ---
 
@@ -99,7 +186,7 @@ DELETE /api/v1/users/me
 > 인증 필요
 
 **Response 204** (No Content)
-> 사용자를 탈퇴 처리하고(soft delete, deleted_at 기록 + refresh_token 무효화), 보유한 푸드트럭·세션·메뉴를 함께 삭제한다.
+> 사용자를 탈퇴 처리하고(soft delete, deleted_at 기록 + 토큰·미사용 로그인 code 무효화), 보유한 푸드트럭·세션·메뉴를 함께 삭제한다.
 
 ---
 
